@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCPO Dashboard - CC IAC PlaceOrder Analytics</title>
+    <link rel="icon" type="image/png" href="images/favicon.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-primary: #0a1628;
+            --bg-card: #111d35;
+            --bg-card-hover: #162544;
+            --border: #1e3a5f;
+            --accent: #00d4ff;
+            --accent2: #6366f1;
+            --accent3: #10b981;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --success: #10b981;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: var(--bg-primary); color: var(--text-primary); }
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; transition: all 0.2s; }
+        .card:hover { background: var(--bg-card-hover); border-color: var(--accent); box-shadow: 0 0 20px rgba(0,212,255,0.05); }
+        .glow-text { text-shadow: 0 0 10px rgba(0,212,255,0.3); }
+        .gradient-border { border-image: linear-gradient(135deg, var(--accent), var(--accent2)) 1; }
+        .chart-container { position: relative; height: 300px; width: 100%; }
+        .status-done { background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+        .status-ongoing { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+        .status-unstarted { background: rgba(99,102,241,0.15); color: #a5b4fc; border: 1px solid rgba(99,102,241,0.3); }
+        .kpi-card { position: relative; overflow: hidden; }
+        .kpi-card::before { content: ''; position: absolute; top: -50%; right: -50%; width: 100%; height: 100%; background: radial-gradient(circle, rgba(0,212,255,0.03) 0%, transparent 70%); }
+        .toast { animation: slideDown 0.3s ease-out; }
+        @keyframes slideDown { from { transform: translateY(-100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .pulse-dot { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .table-scroll::-webkit-scrollbar { width: 6px; }
+        .table-scroll::-webkit-scrollbar-track { background: var(--bg-primary); }
+        .table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        @media (max-width: 768px) { .chart-container { height: 250px; } }
+        .upload-zone { border: 2px dashed var(--border); transition: all 0.3s; }
+        .upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); background: rgba(0,212,255,0.05); }
+        .nav-link { transition: all 0.2s; }
+        .nav-link:hover, .nav-link.active { color: var(--accent); border-bottom: 2px solid var(--accent); }
+    </style>
+</head>
+<body class="min-h-screen">
+    <!-- Navbar -->
+    <header class="sticky top-0 z-50 backdrop-blur-md bg-[#0a1628]/90 border-b border-[#1e3a5f]">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <img src="images/favicon.png" alt="CCPO" class="w-8 h-8 rounded-lg">
+                <h1 class="text-lg font-bold text-white glow-text">CCPO</h1>
+                <span class="hidden sm:inline text-xs text-slate-400 bg-slate-800/50 px-2 py-0.5 rounded" data-zh="CC IAC 采购订单分析" data-en="CC IAC PlaceOrder Analytics">CC IAC 采购订单分析</span>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="dataDate" class="hidden sm:inline text-xs text-slate-500"></span>
+                <button onclick="toggleLang()" class="px-2 py-1 text-xs bg-slate-800 text-cyan-400 rounded border border-cyan-900 hover:bg-slate-700" id="langBtn">EN</button>
+                <button onclick="document.getElementById('fileInput').click()" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors">
+                    <i class="fas fa-upload mr-1"></i><span data-zh="导入Excel" data-en="Import">导入Excel</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Toast -->
+    <div id="toast" class="fixed top-16 right-4 z-50 hidden">
+        <div class="toast card px-4 py-2 flex items-center text-sm border-cyan-800">
+            <i class="fas fa-check-circle mr-2 text-cyan-400"></i>
+            <span id="toastMsg"></span>
+        </div>
+    </div>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4" id="kpiSection">
+            <div class="card kpi-card p-4">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2.5 bg-cyan-950 text-cyan-400 rounded-lg"><i class="fas fa-layer-group text-lg"></i></div>
+                    <div>
+                        <p class="text-xs text-slate-400" data-zh="项目总数" data-en="Total Projects">项目总数</p>
+                        <p class="text-2xl font-bold text-white" id="kpiTotal">16</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card kpi-card p-4">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2.5 bg-indigo-950 text-indigo-400 rounded-lg"><i class="fas fa-coins text-lg"></i></div>
+                    <div>
+                        <p class="text-xs text-slate-400" data-zh="总PO金额" data-en="Total PO Amount">总PO金额</p>
+                        <p class="text-2xl font-bold text-white" id="kpiAmount">¥433K</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card kpi-card p-4">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2.5 bg-emerald-950 text-emerald-400 rounded-lg"><i class="fas fa-check-double text-lg"></i></div>
+                    <div>
+                        <p class="text-xs text-slate-400" data-zh="完成率" data-en="Completion Rate">完成率</p>
+                        <p class="text-2xl font-bold text-white" id="kpiDone">68.8%</p>
+                    </div>
+                </div>
+            </div>
+            <div class="card kpi-card p-4">
+                <div class="flex items-center space-x-3">
+                    <div class="p-2.5 bg-amber-950 text-amber-400 rounded-lg"><i class="fas fa-clock text-lg"></i></div>
+                    <div>
+                        <p class="text-xs text-slate-400" data-zh="平均交付天数" data-en="Avg Delivery Days">平均交付天数</p>
+                        <p class="text-2xl font-bold text-white" id="kpiAvgDays">101</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status & Architecture Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <!-- Status Breakdown -->
+            <div class="card p-5">
+                <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                    <i class="fas fa-chart-pie mr-2 text-cyan-400"></i>
+                    <span data-zh="项目状态分布" data-en="Project Status Breakdown">项目状态分布</span>
+                </h3>
+                <div class="chart-container" style="height:250px;">
+                    <canvas id="chartStatus"></canvas>
+                </div>
+            </div>
+            <!-- Architecture -->
+            <div class="card p-5">
+                <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                    <i class="fas fa-server mr-2 text-indigo-400"></i>
+                    <span data-zh="架构类型分布" data-en="Architecture Distribution">架构类型分布</span>
+                </h3>
+                <div class="chart-container" style="height:250px;">
+                    <canvas id="chartArch"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Quarterly Trend -->
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                <i class="fas fa-chart-line mr-2 text-emerald-400"></i>
+                <span data-zh="季度投资趋势 (RMB)" data-en="Quarterly Investment Trend (RMB)">季度投资趋势 (RMB)</span>
+            </h3>
+            <div class="chart-container">
+                <canvas id="chartQuarterly"></canvas>
+            </div>
+        </div>
+
+        <!-- Delivery Performance -->
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                <i class="fas fa-tachometer-alt mr-2 text-amber-400"></i>
+                <span data-zh="项目交付周期 (天)" data-en="Project Delivery Cycle (Days)">项目交付周期 (天)</span>
+            </h3>
+            <div class="chart-container" style="height:280px;">
+                <canvas id="chartDelivery"></canvas>
+            </div>
+        </div>
+
+        <!-- Cost Efficiency -->
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                <i class="fas fa-balance-scale mr-2 text-purple-400"></i>
+                <span data-zh="成本 vs 交付周期散点图" data-en="Cost vs Delivery Scatter">成本 vs 交付周期散点图</span>
+            </h3>
+            <div class="chart-container">
+                <canvas id="chartScatter"></canvas>
+            </div>
+        </div>
+
+        <!-- Owner Workload -->
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                <i class="fas fa-users mr-2 text-rose-400"></i>
+                <span data-zh="负责人工作负载" data-en="Owner Workload">负责人工作负载</span>
+            </h3>
+            <div class="chart-container">
+                <canvas id="chartOwner"></canvas>
+            </div>
+        </div>
+
+        <!-- Risk Items -->
+        <div class="card p-5">
+            <h3 class="text-sm font-semibold text-slate-300 mb-4 flex items-center">
+                <i class="fas fa-exclamation-triangle mr-2 text-amber-400"></i>
+                <span data-zh="在途/待启动项目" data-en="Ongoing / Unstarted Projects">在途/待启动项目</span>
+                <span class="ml-2 px-2 py-0.5 bg-amber-900/30 text-amber-400 text-xs rounded-full" id="riskCount">5</span>
+            </h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm" id="riskTable">
+                    <thead>
+                        <tr class="text-left text-xs text-slate-500 border-b border-slate-700">
+                            <th class="pb-2 pr-4" data-zh="项目" data-en="Project">项目</th>
+                            <th class="pb-2 pr-4" data-zh="状态" data-en="Status">状态</th>
+                            <th class="pb-2 pr-4" data-zh="PO金额" data-en="PO Amount">PO金额</th>
+                            <th class="pb-2 pr-4" data-zh="PO日期" data-en="PO Date">PO日期</th>
+                            <th class="pb-2" data-zh="架构" data-en="Architecture">架构</th>
+                        </tr>
+                    </thead>
+                    <tbody id="riskBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Full Project Table -->
+        <div class="card p-5">
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                <h3 class="text-sm font-semibold text-slate-300 flex items-center">
+                    <i class="fas fa-list mr-2 text-cyan-400"></i>
+                    <span data-zh="项目明细" data-en="Project Details">项目明细</span>
+                    <span class="ml-2 text-xs text-slate-500" id="tableCount">(16)</span>
+                </h3>
+                <div class="flex items-center space-x-2">
+                    <div class="relative">
+                        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs"></i>
+                        <input type="text" id="searchInput" placeholder="Search..." class="pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 w-40">
+                    </div>
+                    <button onclick="exportCSV()" class="px-3 py-1.5 bg-slate-800 text-emerald-400 border border-emerald-900 rounded-lg text-xs hover:bg-slate-700">
+                        <i class="fas fa-download mr-1"></i><span data-zh="导出" data-en="Export">导出</span>
+                    </button>
+                </div>
+            </div>
+            <div class="table-scroll overflow-y-auto" style="max-height: 400px;">
+                <table class="w-full text-left text-xs text-slate-300">
+                    <thead class="text-slate-500 border-b border-slate-700 sticky top-0 bg-[#111d35] z-10">
+                        <tr>
+                            <th class="py-2 pr-3">#</th>
+                            <th class="py-2 pr-3" data-zh="项目名称" data-en="Project Name">项目名称</th>
+                            <th class="py-2 pr-3">APP ID</th>
+                            <th class="py-2 pr-3" data-zh="架构" data-en="Arch">架构</th>
+                            <th class="py-2 pr-3" data-zh="PO金额" data-en="PO Amt">PO金额</th>
+                            <th class="py-2 pr-3" data-zh="PO日期" data-en="PO Date">PO日期</th>
+                            <th class="py-2 pr-3" data-zh="状态" data-en="Status">状态</th>
+                            <th class="py-2 pr-3 hidden lg:table-cell" data-zh="交付天数" data-en="Days">交付天数</th>
+                        </tr>
+                    </thead>
+                    <tbody id="projectBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Upload Zone -->
+        <div class="card p-6 upload-zone text-center cursor-pointer" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <i class="fas fa-cloud-upload-alt text-3xl text-slate-500 mb-2"></i>
+            <p class="text-sm text-slate-400" data-zh="拖拽 Excel 文件到此处，或点击上传新数据" data-en="Drag & drop Excel file here, or click to upload new data">拖拽 Excel 文件到此处，或点击上传新数据</p>
+            <p class="text-xs text-slate-600 mt-1" data-zh="支持 .xlsx / .xls 格式" data-en="Supports .xlsx / .xls format">支持 .xlsx / .xls 格式</p>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-[#1e3a5f] mt-8 py-4">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row justify-between items-center text-xs text-slate-600">
+            <span>CCPO Dashboard &copy; 2025-2026 CC IAC</span>
+            <span data-zh="数据来源: CCPO Excel 导入" data-en="Data Source: CCPO Excel Import">数据来源: CCPO Excel 导入</span>
+        </div>
+    </footer>
+
+    <input type="file" id="fileInput" accept=".xlsx,.xls" class="hidden">
+
+    <script>
+    (function() {
+        'use strict';
+
+        let currentLang = 'zh';
+        let projectData = [];
+        let charts = {};
+
+        // ============ DEFAULT DATA ============
+        const DEFAULT_DATA = [
+            {no:1, project:'CDN Solution of China DEP 2025', appId:'APP-39800', owner:'marine.yin@henkel.com', arch:'', poDate:'2025-02-20', poAmount:21000, startDate:'2025-01-25', closureDate:'2025-10-22', status:'Done'},
+            {no:2, project:'China AIGC Application v1', appId:'APP-42327', owner:'heidi.wang@henkel.com', arch:'ECI', poDate:'2025-03-28', poAmount:30000, startDate:'2025-03-18', closureDate:'2025-06-25', status:'Done'},
+            {no:3, project:'Scalp check analyzer for SKR_Device 2.0', appId:'App-42272', owner:'yolanda.gan@henkel.com', arch:'ECI', poDate:'2025-05-19', poAmount:30000, startDate:'2025-05-26', closureDate:'2025-09-02', status:'Done'},
+            {no:4, project:'Dormakaba', appId:'APP-35892', owner:'vince.jiang@henkel.com', arch:'', poDate:'2025-06-04', poAmount:6000, startDate:'2025-06-12', closureDate:'2025-09-02', status:'Done'},
+            {no:5, project:'Channel Performance Planning', appId:'APP-42313', owner:'vanessa.liu@henkel.com', arch:'ECI', poDate:'2025-07-01', poAmount:27000, startDate:'2025-07-03', closureDate:'2025-10-31', status:'Done'},
+            {no:6, project:'Beauty Care e-CRM - Mai solution-VSA', appId:'APP-39046', owner:'vanessa.liu@henkel.com', arch:'', poDate:'2025-07-30', poAmount:6000, startDate:'2025-08-05', closureDate:'2025-09-19', status:'Done'},
+            {no:7, project:'Witness Server (IDC)', appId:'APP-41309', owner:'desmond.lee@henkel.com', arch:'', poDate:'2025-10-01', poAmount:18000, startDate:'2025-10-11', closureDate:'2025-12-09', status:'Done'},
+            {no:8, project:'ECHOP FOR HR', appId:'APP-40190', owner:'julie.zhai@henkel.com', arch:'ASK', poDate:'2025-11-04', poAmount:34000, startDate:'2025-10-28', closureDate:'2025-12-22', status:'Done'},
+            {no:9, project:'Echop For HCB', appId:'APP-42822', owner:'heidi.wang@henkel.com', arch:'ASK', poDate:'2025-10-30', poAmount:34000, startDate:'2025-10-28', closureDate:'2025-12-22', status:'Done'},
+            {no:10, project:'DME UAT Separation', appId:'APP-38826', owner:'emma.quan@henkel.com', arch:'ASK', poDate:'2025-11-26', poAmount:36000, startDate:'2025-11-26', closureDate:'2026-05-22', status:'Done'},
+            {no:11, project:'DME OPS', appId:'APP-38826', owner:'emma.quan@henkel.com', arch:'ASK', poDate:'2025-12-01', poAmount:27000, startDate:'2025-12-02', closureDate:'', status:'Ongoing'},
+            {no:12, project:'CDP add ClickHouse', appId:'APP-41603', owner:'will.sun@henkel.com', arch:'', poDate:'2025-12-16', poAmount:14000, startDate:'2025-12-16', closureDate:'2026-01-30', status:'Done'},
+            {no:13, project:'6Sigma', appId:'', owner:'', arch:'', poDate:'2026-05-23', poAmount:39000, startDate:'2026-05-23', closureDate:'', status:'Unstarted'},
+            {no:14, project:'RAQN DEV Env Setup', appId:'APP-42247', owner:'yunpeng.kong@henkel.com', arch:'ASK', poDate:'2026-02-03', poAmount:27000, startDate:'2026-02-27', closureDate:'', status:'Ongoing'},
+            {no:15, project:'DME PRD', appId:'APP-38826', owner:'emma.quan@henkel.com', arch:'ASK', poDate:'2026-03-06', poAmount:24000, startDate:'2026-03-09', closureDate:'', status:'Ongoing'},
+            {no:16, project:'BECRM', appId:'APP-39046', owner:'julie.zheng@henkel.com', arch:'Self created K8S', poDate:'2026-04-09', poAmount:60000, startDate:'2026-04-09', closureDate:'', status:'Ongoing'}
+        ];
+
+        // ============ INITIALIZATION ============
+        function init() {
+            projectData = DEFAULT_DATA;
+            renderAll();
+            setupEvents();
+        }
+
+        // ============ EXCEL PARSER ============
+        function parseExcel(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const wb = XLSX.read(e.target.result, {type:'array', cellDates:true});
+                    const ws = wb.Sheets[wb.SheetNames[0]];
+                    const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+                    if (!rows.length) { showToast('Empty file'); return; }
+
+                    projectData = rows.map((r, i) => {
+                        const cols = Object.keys(r);
+                        return {
+                            no: r[cols[0]] || (i+1),
+                            project: r[cols[1]] || '',
+                            appId: r[cols[2]] || '',
+                            owner: (r[cols[3]] || '').toString().split(',')[0].split('\n')[0].trim(),
+                            arch: r[cols[4]] || '',
+                            poDate: formatDate(r[cols[5]]),
+                            poAmount: parseFloat(r[cols[6]]) || 0,
+                            startDate: formatDate(r[cols[7]]),
+                            closureDate: formatDate(r[cols[12]]),
+                            status: r[cols[13]] || 'Unknown'
+                        };
+                    }).filter(r => r.project);
+
+                    renderAll();
+                    showToast(currentLang === 'zh' ? '数据已更新 (' + projectData.length + ' 项目)' : 'Data updated (' + projectData.length + ' projects)');
+                } catch(err) {
+                    showToast('Parse error: ' + err.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function formatDate(v) {
+            if (!v) return '';
+            if (v instanceof Date) return v.toISOString().split('T')[0];
+            const s = v.toString();
+            if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.substring(0,10);
+            return s;
+        }
+
+        // ============ RENDER ALL ============
+        function renderAll() {
+            renderKPIs();
+            renderCharts();
+            renderRiskTable();
+            renderProjectTable();
+            updateDataDate();
+        }
+
+        // ============ KPIs ============
+        function renderKPIs() {
+            const total = projectData.length;
+            const totalAmount = projectData.reduce((s,p) => s + p.poAmount, 0);
+            const done = projectData.filter(p => p.status === 'Done');
+            const doneRate = total ? ((done.length / total) * 100).toFixed(1) : 0;
+
+            let avgDays = 0;
+            const delivered = done.filter(p => p.startDate && p.closureDate);
+            if (delivered.length) {
+                const totalDays = delivered.reduce((s,p) => {
+                    return s + Math.round((new Date(p.closureDate) - new Date(p.startDate)) / 86400000);
+                }, 0);
+                avgDays = Math.round(totalDays / delivered.length);
+            }
+
+            document.getElementById('kpiTotal').textContent = total;
+            document.getElementById('kpiAmount').textContent = totalAmount >= 1000 ? '¥' + (totalAmount/1000).toFixed(0) + 'K' : '¥' + totalAmount.toLocaleString();
+            document.getElementById('kpiDone').textContent = doneRate + '%';
+            document.getElementById('kpiAvgDays').textContent = avgDays;
+        }
+
+        // ============ CHARTS ============
+        function renderCharts() {
+            Object.values(charts).forEach(c => c.destroy());
+            charts = {};
+            renderStatusChart();
+            renderArchChart();
+            renderQuarterlyChart();
+            renderDeliveryChart();
+            renderScatterChart();
+            renderOwnerChart();
+        }
+
+        function renderStatusChart() {
+            const counts = {};
+            projectData.forEach(p => { counts[p.status] = (counts[p.status]||0) + 1; });
+            const labels = Object.keys(counts);
+            const colors = labels.map(l => l==='Done' ? '#10b981' : l==='Ongoing' ? '#f59e0b' : '#6366f1');
+
+            charts.status = new Chart(document.getElementById('chartStatus'), {
+                type: 'doughnut',
+                data: { labels, datasets: [{ data: Object.values(counts), backgroundColor: colors, borderWidth: 0 }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'right', labels: { color: '#94a3b8', padding: 12 } } },
+                    cutout: '65%'
+                }
+            });
+        }
+
+        function renderArchChart() {
+            const counts = {};
+            const amounts = {};
+            projectData.forEach(p => {
+                const a = p.arch || 'Unspecified';
+                counts[a] = (counts[a]||0) + 1;
+                amounts[a] = (amounts[a]||0) + p.poAmount;
+            });
+            const labels = Object.keys(counts);
+            const colors = ['#00d4ff','#6366f1','#f59e0b','#10b981','#ec4899'];
+
+            charts.arch = new Chart(document.getElementById('chartArch'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: currentLang==='zh'?'项目数':'Count', data: Object.values(counts), backgroundColor: colors.map(c=>c+'66'), borderColor: colors, borderWidth: 1, yAxisID: 'y' },
+                        { label: currentLang==='zh'?'总金额(K)':'Amount(K)', data: Object.values(amounts).map(v=>v/1000), backgroundColor: 'rgba(99,102,241,0.2)', borderColor: '#6366f1', borderWidth: 1, type:'line', yAxisID: 'y1' }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    scales: {
+                        x: { ticks: { color: '#64748b' }, grid: { color: '#1e3a5f33' } },
+                        y: { position:'left', ticks: { color: '#64748b' }, grid: { color: '#1e3a5f33' } },
+                        y1: { position:'right', ticks: { color: '#6366f1' }, grid: { display:false } }
+                    }
+                }
+            });
+        }
+
+        function renderQuarterlyChart() {
+            const qData = {};
+            projectData.forEach(p => {
+                if (!p.poDate) return;
+                const d = new Date(p.poDate);
+                const q = d.getFullYear() + 'Q' + (Math.floor(d.getMonth()/3)+1);
+                if (!qData[q]) qData[q] = { count: 0, amount: 0 };
+                qData[q].count++;
+                qData[q].amount += p.poAmount;
+            });
+            const labels = Object.keys(qData).sort();
+            const amounts = labels.map(l => qData[l].amount / 1000);
+            const counts = labels.map(l => qData[l].count);
+
+            charts.quarterly = new Chart(document.getElementById('chartQuarterly'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: currentLang==='zh'?'投资额 (K RMB)':'Investment (K RMB)', data: amounts, backgroundColor: 'rgba(0,212,255,0.3)', borderColor: '#00d4ff', borderWidth: 1, borderRadius: 4 },
+                        { label: currentLang==='zh'?'项目数':'Project Count', data: counts, type:'line', borderColor: '#f59e0b', backgroundColor: '#f59e0b', pointRadius: 4, tension: 0.3, yAxisID: 'y1' }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    scales: {
+                        x: { ticks: { color: '#64748b' }, grid: { color: '#1e3a5f33' } },
+                        y: { position:'left', ticks: { color: '#64748b', callback: v => v+'K' }, grid: { color: '#1e3a5f33' } },
+                        y1: { position:'right', ticks: { color: '#f59e0b', stepSize: 1 }, grid: { display:false } }
+                    }
+                }
+            });
+        }
+
+        function renderDeliveryChart() {
+            const done = projectData.filter(p => p.status === 'Done' && p.startDate && p.closureDate);
+            const labels = done.map(p => p.project.length > 20 ? p.project.substring(0,18)+'...' : p.project);
+            const days = done.map(p => Math.round((new Date(p.closureDate) - new Date(p.startDate)) / 86400000));
+            const avg = days.length ? Math.round(days.reduce((s,d)=>s+d,0)/days.length) : 0;
+            const colors = days.map(d => d > avg*1.5 ? '#ef4444' : d > avg ? '#f59e0b' : '#10b981');
+
+            charts.delivery = new Chart(document.getElementById('chartDelivery'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: currentLang==='zh'?'交付天数':'Delivery Days', data: days, backgroundColor: colors.map(c=>c+'88'), borderColor: colors, borderWidth: 1, borderRadius: 4 },
+                        { label: currentLang==='zh'?'平均':'Average', data: Array(days.length).fill(avg), type: 'line', borderColor: '#64748b', borderDash: [5,5], pointRadius: 0 }
+                    ]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    scales: {
+                        x: { ticks: { color: '#64748b' }, grid: { color: '#1e3a5f33' } },
+                        y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } }
+                    }
+                }
+            });
+        }
+
+        function renderScatterChart() {
+            const done = projectData.filter(p => p.status === 'Done' && p.startDate && p.closureDate);
+            const points = done.map(p => ({
+                x: Math.round((new Date(p.closureDate) - new Date(p.startDate)) / 86400000),
+                y: p.poAmount / 1000,
+                label: p.project
+            }));
+
+            charts.scatter = new Chart(document.getElementById('chartScatter'), {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: currentLang==='zh'?'已完成项目':'Completed Projects',
+                        data: points,
+                        backgroundColor: '#00d4ff66',
+                        borderColor: '#00d4ff',
+                        pointRadius: 8,
+                        pointHoverRadius: 12
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: { labels: { color: '#94a3b8' } },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => ctx.raw.label + ' (' + ctx.raw.x + (currentLang==='zh'?'天, ¥':'d, ¥') + ctx.raw.y + 'K)'
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { title: { display: true, text: currentLang==='zh'?'交付天数':'Delivery Days', color: '#64748b' }, ticks: { color: '#64748b' }, grid: { color: '#1e3a5f33' } },
+                        y: { title: { display: true, text: currentLang==='zh'?'PO金额 (K RMB)':'PO Amount (K RMB)', color: '#64748b' }, ticks: { color: '#64748b' }, grid: { color: '#1e3a5f33' } }
+                    }
+                }
+            });
+        }
+
+        function renderOwnerChart() {
+            const ownerData = {};
+            projectData.forEach(p => {
+                const o = p.owner ? p.owner.split('@')[0] : 'unknown';
+                if (!ownerData[o]) ownerData[o] = { count: 0, amount: 0 };
+                ownerData[o].count++;
+                ownerData[o].amount += p.poAmount;
+            });
+            const sorted = Object.entries(ownerData).sort((a,b) => b[1].amount - a[1].amount);
+            const labels = sorted.map(s => s[0]);
+            const amounts = sorted.map(s => s[1].amount / 1000);
+            const counts = sorted.map(s => s[1].count);
+
+            charts.owner = new Chart(document.getElementById('chartOwner'), {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: currentLang==='zh'?'总PO金额 (K)':'Total PO (K)', data: amounts, backgroundColor: 'rgba(99,102,241,0.4)', borderColor: '#6366f1', borderWidth: 1, borderRadius: 4 },
+                        { label: currentLang==='zh'?'项目数':'Projects', data: counts, type: 'line', borderColor: '#10b981', backgroundColor: '#10b981', pointRadius: 4, yAxisID: 'y1' }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#94a3b8' } } },
+                    scales: {
+                        x: { ticks: { color: '#64748b', maxRotation: 45 }, grid: { color: '#1e3a5f33' } },
+                        y: { position:'left', ticks: { color: '#64748b', callback: v=>v+'K' }, grid: { color: '#1e3a5f33' } },
+                        y1: { position:'right', ticks: { color: '#10b981', stepSize:1 }, grid: { display:false } }
+                    }
+                }
+            });
+        }
+
+        // ============ RISK TABLE ============
+        function renderRiskTable() {
+            const risks = projectData.filter(p => p.status !== 'Done');
+            document.getElementById('riskCount').textContent = risks.length;
+            const tbody = document.getElementById('riskBody');
+            tbody.innerHTML = risks.map(p => `
+                <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+                    <td class="py-2.5 pr-4 text-sm text-white font-medium">${p.project}</td>
+                    <td class="py-2.5 pr-4"><span class="px-2 py-0.5 rounded-full text-xs status-${p.status.toLowerCase()}">${p.status}</span></td>
+                    <td class="py-2.5 pr-4 text-sm">¥${p.poAmount.toLocaleString()}</td>
+                    <td class="py-2.5 pr-4 text-sm text-slate-400">${p.poDate}</td>
+                    <td class="py-2.5 text-sm text-slate-400">${p.arch || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // ============ PROJECT TABLE ============
+        function renderProjectTable(filter='') {
+            const filtered = filter ? projectData.filter(p => p.project.toLowerCase().includes(filter.toLowerCase()) || p.appId.toLowerCase().includes(filter.toLowerCase())) : projectData;
+            document.getElementById('tableCount').textContent = '(' + filtered.length + ')';
+            const tbody = document.getElementById('projectBody');
+            tbody.innerHTML = filtered.map(p => {
+                let days = '-';
+                if (p.status === 'Done' && p.startDate && p.closureDate) {
+                    days = Math.round((new Date(p.closureDate) - new Date(p.startDate)) / 86400000);
+                }
+                return `
+                <tr class="border-b border-slate-800/50 hover:bg-slate-800/30">
+                    <td class="py-2 pr-3 text-slate-500">${p.no}</td>
+                    <td class="py-2 pr-3 text-white font-medium">${p.project}</td>
+                    <td class="py-2 pr-3 text-slate-400">${p.appId || '-'}</td>
+                    <td class="py-2 pr-3"><span class="text-xs px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">${p.arch || '-'}</span></td>
+                    <td class="py-2 pr-3 text-cyan-300 font-medium">¥${p.poAmount.toLocaleString()}</td>
+                    <td class="py-2 pr-3 text-slate-400">${p.poDate}</td>
+                    <td class="py-2 pr-3"><span class="px-2 py-0.5 rounded-full text-xs status-${p.status.toLowerCase()}">${p.status}</span></td>
+                    <td class="py-2 pr-3 hidden lg:table-cell text-slate-400">${days}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // ============ LANGUAGE ============
+        function toggleLang() {
+            currentLang = currentLang === 'zh' ? 'en' : 'zh';
+            document.getElementById('langBtn').textContent = currentLang === 'zh' ? 'EN' : '中';
+            document.querySelectorAll('[data-en]').forEach(el => {
+                const text = el.getAttribute('data-' + currentLang);
+                if (text) el.textContent = text;
+            });
+            renderCharts();
+        }
+        window.toggleLang = toggleLang;
+
+        // ============ UTILITIES ============
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            document.getElementById('toastMsg').textContent = msg;
+            t.classList.remove('hidden');
+            setTimeout(() => t.classList.add('hidden'), 3000);
+        }
+
+        function updateDataDate() {
+            const dates = projectData.map(p => p.poDate).filter(Boolean).sort();
+            if (dates.length) {
+                document.getElementById('dataDate').textContent = (currentLang==='zh'?'数据截至 ':'Data as of ') + dates[dates.length-1];
+            }
+        }
+
+        function exportCSV() {
+            const headers = ['NO','Project','APP ID','Architecture','PO Date','PO Amount','Start Date','Closure Date','Status'];
+            const rows = projectData.map(p => [p.no,p.project,p.appId,p.arch,p.poDate,p.poAmount,p.startDate,p.closureDate,p.status]);
+            const csv = [headers,...rows].map(r => r.map(c => '"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
+            const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'});
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'CCPO_export.csv'; a.click();
+        }
+        window.exportCSV = exportCSV;
+
+        // ============ EVENTS ============
+        function setupEvents() {
+            document.getElementById('fileInput').addEventListener('change', e => {
+                if (e.target.files[0]) parseExcel(e.target.files[0]);
+                e.target.value = '';
+            });
+
+            const zone = document.getElementById('uploadZone');
+            zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+            zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+            zone.addEventListener('drop', e => { e.preventDefault(); zone.classList.remove('dragover'); if(e.dataTransfer.files[0]) parseExcel(e.dataTransfer.files[0]); });
+
+            document.getElementById('searchInput').addEventListener('input', e => renderProjectTable(e.target.value));
+        }
+
+        // ============ START ============
+        document.addEventListener('DOMContentLoaded', init);
+    })();
+    </script>
+</body>
+</html>
